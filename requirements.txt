@@ -1,5 +1,6 @@
 aiogram==3.13.1
 aiohttp==3.10.11
+pydantic==2.8.2
 yt-dlp
 imageio-ffmpeg
 mutagen
