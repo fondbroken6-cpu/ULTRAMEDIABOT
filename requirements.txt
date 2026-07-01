@@ -4,5 +4,5 @@ pydantic==2.8.2
 yt-dlp
 imageio-ffmpeg
 mutagen
-shazamio
+shazamio==0.8.1
 python-dotenv
