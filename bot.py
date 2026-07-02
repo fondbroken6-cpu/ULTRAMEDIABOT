@@ -39,7 +39,10 @@ BOT_USERNAME = "@Ultraasave_bot"
 
 DEEZER_API_URL = "https://api.deezer.com/search"
 LRCLIB_API_URL = "https://lrclib.net/api/search"
-COOKIES_FILE = Path(__file__).with_name("cookies.txt")
+
+PROJECT_DIRECTORY = Path(__file__).resolve().parent
+INSTAGRAM_COOKIES_FILE = PROJECT_DIRECTORY / "instagram_cookies.txt"
+YOUTUBE_COOKIES_FILE = PROJECT_DIRECTORY / "youtube_cookies.txt"
 
 SEARCH_LIMIT = 10
 MAX_LYRICS_LENGTH = 3500
@@ -144,30 +147,78 @@ def search_results_menu(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def is_supported_link(text: str) -> bool:
-    value = text.strip().lower()
-
-    patterns = (
-        r"https?://([^/]+\.)?tiktok\.com/",
-        r"https?://([^/]+\.)?instagram\.com/(reel|reels|p)/",
-        r"https?://([^/]+\.)?instagr\.am/",
-        r"https?://([^/]+\.)?youtube\.com/shorts/",
-        r"https?://youtu\.be/",
-    )
-
-    return any(
-        re.search(pattern, value)
-        for pattern in patterns
-    )
-
-
-def is_instagram_link(url: str) -> bool:
+def is_instagram_url(url: str) -> bool:
     value = url.lower()
 
-    return (
-        "instagram.com/" in value
-        or "instagr.am/" in value
+    return bool(
+        re.search(
+            r"https?://([^/]+\.)?instagram\.com/(reel|reels|p)/",
+            value,
+        )
+        or re.search(
+            r"https?://([^/]+\.)?instagr\.am/",
+            value,
+        )
     )
+
+
+def is_youtube_url(url: str) -> bool:
+    value = url.lower()
+
+    return bool(
+        re.search(
+            r"https?://([^/]+\.)?youtube\.com/shorts/",
+            value,
+        )
+        or re.search(
+            r"https?://youtu\.be/",
+            value,
+        )
+    )
+
+
+def is_tiktok_url(url: str) -> bool:
+    return bool(
+        re.search(
+            r"https?://([^/]+\.)?tiktok\.com/",
+            url.lower(),
+        )
+    )
+
+
+def detect_platform(url: str) -> str:
+    if is_instagram_url(url):
+        return "instagram"
+
+    if is_youtube_url(url):
+        return "youtube"
+
+    if is_tiktok_url(url):
+        return "tiktok"
+
+    return "other"
+
+
+def is_supported_url(url: str) -> bool:
+    return detect_platform(url) in {
+        "instagram",
+        "youtube",
+        "tiktok",
+    }
+
+
+def cookie_file_for_url(
+    url: str,
+) -> Path | None:
+    platform = detect_platform(url)
+
+    if platform == "instagram":
+        return INSTAGRAM_COOKIES_FILE
+
+    if platform == "youtube":
+        return YOUTUBE_COOKIES_FILE
+
+    return None
 
 
 def format_duration(value: Any) -> str:
@@ -185,7 +236,9 @@ def format_duration(value: Any) -> str:
     return f"{minutes}:{seconds:02d}"
 
 
-def official_links(song: dict[str, Any]) -> str:
+def official_links(
+    song: dict[str, Any],
+) -> str:
     title = str(song.get("title") or "")
     artist = str(song.get("artist") or "")
     query = quote_plus(f"{artist} {title}".strip())
@@ -237,9 +290,7 @@ def create_search_session(
     }
 
     if len(search_sessions) > 1000:
-        old_tokens = list(search_sessions)[:200]
-
-        for old_token in old_tokens:
+        for old_token in list(search_sessions)[:200]:
             search_sessions.pop(old_token, None)
 
     return token
@@ -302,54 +353,20 @@ async def safe_callback_answer(
         pass
 
 
-def user_error_message(
+def download_error_message(
     error: Exception,
     url: str,
     mode: str,
 ) -> str:
+    platform = detect_platform(url)
+
+    if platform == "instagram":
+        return "❌ Instagram yuklab bo'lmadi."
+
+    if platform == "youtube":
+        return "❌ YouTube yuklab bo'lmadi."
+
     error_text = str(error).lower()
-
-    if "empty media response" in error_text:
-        return (
-            "❌ Instagram media bermadi. Cookies kerak "
-            "yoki post yopiq bo'lishi mumkin."
-        )
-
-    private_markers = (
-        "private",
-        "login required",
-        "requested content is not available",
-        "this content isn't available",
-        "content is unavailable",
-        "not available",
-    )
-
-    if is_instagram_link(url):
-        if any(
-            marker in error_text
-            for marker in private_markers
-        ):
-            return (
-                "❌ Ushbu post yopiq hisobga tegishli "
-                "yoki mavjud emas."
-            )
-
-    cookies_markers = (
-        "cookies",
-        "cookie",
-        "login_required",
-        "authentication required",
-    )
-
-    if is_instagram_link(url):
-        if any(
-            marker in error_text
-            for marker in cookies_markers
-        ):
-            return (
-                "❌ Instagram ushbu media uchun kirishni "
-                "chekladi. cookies.txt fayli kerak bo'lishi mumkin."
-            )
 
     blocked_markers = (
         "http error 403",
@@ -381,9 +398,6 @@ def user_error_message(
         marker in error_text
         for marker in media_markers
     ):
-        if is_instagram_link(url):
-            return "❌ Instagram videosi topilmadi."
-
         return (
             "❌ Media topilmadi yoki havola "
             "qo'llab-quvvatlanmaydi."
@@ -422,7 +436,9 @@ def user_error_message(
     messages = {
         "video": "❌ Video yuklab olinmadi.",
         "mp3": "❌ MP3 ajratib bo'lmadi.",
-        "identify": "❌ Musiqani aniqlash uchun audio olinmadi.",
+        "identify": (
+            "❌ Musiqani aniqlash uchun audio olinmadi."
+        ),
     }
 
     return messages.get(
@@ -431,7 +447,9 @@ def user_error_message(
     )
 
 
-def ytdlp_base_options() -> dict[str, Any]:
+def ytdlp_options(
+    url: str,
+) -> dict[str, Any]:
     options: dict[str, Any] = {
         "quiet": True,
         "no_warnings": True,
@@ -464,18 +482,32 @@ def ytdlp_base_options() -> dict[str, Any]:
         },
     }
 
-    if COOKIES_FILE.is_file():
-        options["cookiefile"] = str(COOKIES_FILE)
+    cookie_file = cookie_file_for_url(url)
+
+    if cookie_file and cookie_file.is_file():
+        options["cookiefile"] = str(cookie_file)
 
         logger.info(
-            "cookies.txt ishlatilmoqda | manzil=%s",
-            COOKIES_FILE,
+            "Cookie fayli ishlatilmoqda | "
+            "platforma=%s | fayl=%s",
+            detect_platform(url),
+            cookie_file,
+        )
+
+    elif cookie_file:
+        logger.info(
+            "Cookie fayli topilmadi, cookiesiz davom etiladi | "
+            "platforma=%s | kutilgan_fayl=%s",
+            detect_platform(url),
+            cookie_file,
         )
 
     return options
 
 
-def clear_temporary_folder(folder: str) -> None:
+def clear_temporary_folder(
+    folder: str,
+) -> None:
     folder_path = Path(folder)
 
     if not folder_path.exists():
@@ -533,7 +565,7 @@ def download_media(
         prefix="ultramedia_"
     )
 
-    options = ytdlp_base_options()
+    options = ytdlp_options(url)
 
     if mode == "video":
         formats = [
@@ -599,8 +631,10 @@ def download_media(
 
             try:
                 logger.info(
-                    "Yuklash boshlandi | tur=%s | "
-                    "urinish=%s/%s | format=%s | havola=%s",
+                    "Yuklash boshlandi | platforma=%s | "
+                    "tur=%s | urinish=%s/%s | "
+                    "format=%s | havola=%s",
+                    detect_platform(url),
                     mode,
                     attempt,
                     len(formats),
@@ -649,8 +683,9 @@ def download_media(
                     )
 
                 logger.info(
-                    "Yuklash tugadi | tur=%s | "
-                    "hajm=%s | havola=%s",
+                    "Yuklash tugadi | platforma=%s | "
+                    "tur=%s | hajm=%s | havola=%s",
+                    detect_platform(url),
                     mode,
                     file_size,
                     url,
@@ -663,8 +698,9 @@ def download_media(
 
                 logger.exception(
                     "Yuklash urinishi muvaffaqiyatsiz | "
-                    "tur=%s | urinish=%s/%s | "
-                    "havola=%s | xato=%r",
+                    "platforma=%s | tur=%s | "
+                    "urinish=%s/%s | havola=%s | xato=%r",
+                    detect_platform(url),
                     mode,
                     attempt,
                     len(formats),
@@ -747,7 +783,6 @@ def parse_shazam_result(
     result: dict[str, Any],
 ) -> dict[str, Any] | None:
     track = result.get("track") or {}
-
     title = track.get("title")
 
     if not title:
@@ -757,11 +792,12 @@ def parse_shazam_result(
 
     for section in track.get("sections") or []:
         for item in section.get("metadata") or []:
-            metadata_title = str(
-                item.get("title", "")
-            ).lower()
-
-            if metadata_title == "album":
+            if (
+                str(
+                    item.get("title", "")
+                ).lower()
+                == "album"
+            ):
                 album = item.get("text")
                 break
 
@@ -802,11 +838,6 @@ async def identify_music(
                 folder,
                 start_second,
                 index,
-            )
-
-            logger.info(
-                "Shazam tekshiruvi | oraliq=%s",
-                window_name,
             )
 
             raw_result = await shazam.recognize(
@@ -908,23 +939,13 @@ async def request_lyrics(
             params=parameters,
         ) as response:
             if response.status != 200:
-                logger.warning(
-                    "LRCLIB xato javobi | kod=%s | "
-                    "so'rov=%s",
-                    response.status,
-                    parameters,
-                )
-
                 return []
 
             data = await response.json(
                 content_type=None
             )
 
-    if not isinstance(data, list):
-        return []
-
-    return data
+    return data if isinstance(data, list) else []
 
 
 def prepare_lyrics(
@@ -973,7 +994,7 @@ async def search_lyrics_by_query(
 
     lyrics = prepare_lyrics(results)
 
-    if not lyrics or not results:
+    if not results or not lyrics:
         return None
 
     item = results[0]
@@ -1008,8 +1029,7 @@ async def download_preview(
             ) as response:
                 if response.status != 200:
                     raise RuntimeError(
-                        "Deezer namuna audiosi olinmadi. "
-                        f"Javob kodi: {response.status}"
+                        "Namuna audio olinmadi."
                     )
 
                 with open(
@@ -1023,12 +1043,10 @@ async def download_preview(
                     ):
                         output_file.write(chunk)
 
-        if not os.path.exists(preview_path):
-            raise RuntimeError(
-                "Namuna audio fayli topilmadi."
-            )
-
-        if os.path.getsize(preview_path) <= 0:
+        if (
+            not os.path.exists(preview_path)
+            or os.path.getsize(preview_path) <= 0
+        ):
             raise RuntimeError(
                 "Namuna audio fayli bo'sh."
             )
@@ -1081,7 +1099,10 @@ async def send_identified_music(
 async def start_handler(
     message: Message,
 ) -> None:
-    user_modes.pop(message.from_user.id, None)
+    user_modes.pop(
+        message.from_user.id,
+        None,
+    )
 
     await message.answer(
         "🚀 UltraMediaBot\n\n"
@@ -1121,21 +1142,15 @@ async def main_menu_handler(
         ),
     }
 
-    if action in {"video", "mp3", "identify"}:
-        user_modes[callback.from_user.id] = action
-
-    elif action == "search":
-        user_modes[callback.from_user.id] = "search"
-
-    elif action == "lyrics":
-        user_modes[callback.from_user.id] = "lyrics"
-
-    else:
+    if action not in messages:
         await callback.message.answer(
             "❌ Noto'g'ri tanlov."
         )
+
         await safe_callback_answer(callback)
         return
+
+    user_modes[callback.from_user.id] = action
 
     await callback.message.answer(
         messages[action]
@@ -1157,12 +1172,14 @@ async def message_handler(
         )
         return
 
-    if is_supported_link(text):
+    if is_supported_url(text):
         user_links[user_id] = text
 
         logger.info(
             "Havola qabul qilindi | "
-            "foydalanuvchi=%s | havola=%s",
+            "platforma=%s | foydalanuvchi=%s | "
+            "havola=%s",
+            detect_platform(text),
             user_id,
             text,
         )
@@ -1296,15 +1313,9 @@ async def process_media_action(
             return
 
         status_messages = {
-            "video": (
-                "⏳ Video yuklab olinmoqda..."
-            ),
-            "mp3": (
-                "⏳ MP3 ajratilmoqda..."
-            ),
-            "identify": (
-                "⏳ Musiqa aniqlanmoqda..."
-            ),
+            "video": "⏳ Video yuklab olinmoqda...",
+            "mp3": "⏳ MP3 ajratilmoqda...",
+            "identify": "⏳ Musiqa aniqlanmoqda...",
         }
 
         status = await callback.message.answer(
@@ -1366,16 +1377,17 @@ async def process_media_action(
 
     except Exception as error:
         logger.exception(
-            "Media amalida xato | tur=%s | "
-            "foydalanuvchi=%s | havola=%s | "
-            "xato=%r",
+            "Media amalida xato | platforma=%s | "
+            "tur=%s | foydalanuvchi=%s | "
+            "havola=%s | xato=%r",
+            detect_platform(url or ""),
             mode,
             callback.from_user.id,
             url,
             error,
         )
 
-        text = user_error_message(
+        text = download_error_message(
             error,
             url or "",
             mode,
@@ -1477,24 +1489,22 @@ async def song_result_callback(
                 )
             )
 
-            caption = (
-                "🎵 Namuna audio\n\n"
-                f"🎵 Nomi: {song['title']}\n"
-                f"👤 Ijrochi: {song['artist']}\n"
-                f"💿 Albom: "
-                f"{song.get('album') or 'Topilmadi'}\n"
-                f"⏱ Davomiyligi: "
-                f"{format_duration(song.get('duration'))}\n\n"
-                f"{official_links(song)}\n\n"
-                f"{BOT_USERNAME}"
-            )
-
             await callback.message.answer_audio(
                 audio=FSInputFile(
                     preview_path,
                     filename="preview.mp3",
                 ),
-                caption=caption,
+                caption=(
+                    "🎵 Namuna audio\n\n"
+                    f"🎵 Nomi: {song['title']}\n"
+                    f"👤 Ijrochi: {song['artist']}\n"
+                    f"💿 Albom: "
+                    f"{song.get('album') or 'Topilmadi'}\n"
+                    f"⏱ Davomiyligi: "
+                    f"{format_duration(song.get('duration'))}\n\n"
+                    f"{official_links(song)}\n\n"
+                    f"{BOT_USERNAME}"
+                ),
             )
 
         else:
