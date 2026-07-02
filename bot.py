@@ -1,7 +1,3 @@
-
-## 3. bot.py
-
-```python
 import asyncio
 import logging
 import os
