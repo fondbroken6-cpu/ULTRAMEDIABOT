@@ -15,7 +15,7 @@ aniqlash, qo'shiq qidirish va qo'shiq matnini topish uchun yaratilgan.
 - Deezer namuna audiosini yuborish
 - LRCLIB orqali qo'shiq matnini topish
 - Spotify, Apple Music, YouTube va Deezer havolalarini berish
-- Ixtiyoriy `cookies.txt` faylini ishlatish
+- Instagram va YouTube uchun alohida cookie fayllari
 - Render fon ishchisi bilan ishlash
 
 ## Talablar
