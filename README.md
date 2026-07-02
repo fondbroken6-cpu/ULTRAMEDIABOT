@@ -1,24 +1,33 @@
 # UltraMediaBot
 
-Telegram media bot built with Python 3.12 and aiogram 3.
+UltraMediaBot Telegram orqali media yuklash, MP3 ajratish, musiqani
+aniqlash, qo'shiq qidirish va qo'shiq matnini topish uchun yaratilgan.
 
-## Features
+## Imkoniyatlar
 
-- TikTok video download
-- Instagram Reel and Post download
-- YouTube Shorts download
-- MP3 audio extraction
-- Shazam music identification
-- Deezer song search and preview
-- LRCLIB lyrics search
-- Spotify, Apple Music, YouTube, Deezer, and Shazam links
-- Optional `cookies.txt` support
-- Render Background Worker support
+- Instagram Reel yuklab olish
+- Instagram Post yuklab olish
+- TikTok video yuklab olish
+- YouTube Shorts yuklab olish
+- Videodan MP3 ajratish
+- Shazam orqali musiqani aniqlash
+- Deezer orqali qo'shiq qidirish
+- Deezer namuna audiosini yuborish
+- LRCLIB orqali qo'shiq matnini topish
+- Spotify, Apple Music, YouTube va Deezer havolalarini berish
+- Ixtiyoriy `cookies.txt` faylini ishlatish
+- Render fon ishchisi bilan ishlash
 
-## Installation
+## Talablar
 
-Create a Python 3.12 virtual environment and install dependencies:
+- Python 3.12
+- Telegram bot tokeni
+- Internetga ulanish
+- Render uchun bitta fon ishchisi
+
+## O'rnatish
+
+Virtual muhit yarating:
 
 ```bash
 python -m venv .venv
-pip install -r requirements.txt
