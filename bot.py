@@ -32,14 +32,13 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN environment variable topilmadi.")
+    raise RuntimeError("BOT_TOKEN muhit o'zgaruvchisi topilmadi.")
 
 BOT_NAME = "UltraMediaBot"
 BOT_USERNAME = "@Ultraasave_bot"
 
-DEEZER_API = "https://api.deezer.com/search"
-LRCLIB_API = "https://lrclib.net/api/search"
-
+DEEZER_API_URL = "https://api.deezer.com/search"
+LRCLIB_API_URL = "https://lrclib.net/api/search"
 COOKIES_FILE = Path(__file__).with_name("cookies.txt")
 
 SEARCH_LIMIT = 10
@@ -49,7 +48,6 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
-
 logger = logging.getLogger(BOT_NAME)
 
 bot = Bot(token=BOT_TOKEN)
@@ -57,25 +55,65 @@ dp = Dispatcher()
 shazam = Shazam()
 
 user_links: dict[int, str] = {}
+user_modes: dict[int, str] = {}
 search_sessions: dict[str, dict[str, Any]] = {}
 
 
-def media_keyboard() -> InlineKeyboardMarkup:
+def main_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="📹 Video",
-                    callback_data="media:video",
-                ),
-                InlineKeyboardButton(
-                    text="🎵 MP3",
-                    callback_data="media:mp3",
-                ),
+                    text="🎥 Video yuklab olish",
+                    callback_data="menu:video",
+                )
             ],
             [
                 InlineKeyboardButton(
-                    text="🎼 Identify Music",
+                    text="🎵 MP3 ajratish",
+                    callback_data="menu:mp3",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🎼 Musiqani aniqlash",
+                    callback_data="menu:identify",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔍 Qo'shiq qidirish",
+                    callback_data="menu:search",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📝 Qo'shiq matni",
+                    callback_data="menu:lyrics",
+                )
+            ],
+        ]
+    )
+
+
+def media_menu() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🎥 Video yuklab olish",
+                    callback_data="media:video",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🎵 MP3 ajratish",
+                    callback_data="media:mp3",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🎼 Musiqani aniqlash",
                     callback_data="media:identify",
                 )
             ],
@@ -83,7 +121,10 @@ def media_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def search_keyboard(token: str, count: int) -> InlineKeyboardMarkup:
+def search_results_menu(
+    token: str,
+    count: int,
+) -> InlineKeyboardMarkup:
     buttons = [
         InlineKeyboardButton(
             text=str(index + 1),
@@ -92,7 +133,7 @@ def search_keyboard(token: str, count: int) -> InlineKeyboardMarkup:
         for index in range(count)
     ]
 
-    rows = []
+    rows: list[list[InlineKeyboardButton]] = []
 
     if buttons[:5]:
         rows.append(buttons[:5])
@@ -104,7 +145,7 @@ def search_keyboard(token: str, count: int) -> InlineKeyboardMarkup:
 
 
 def is_supported_link(text: str) -> bool:
-    value = text.lower().strip()
+    value = text.strip().lower()
 
     patterns = (
         r"https?://([^/]+\.)?tiktok\.com/",
@@ -131,11 +172,11 @@ def is_instagram_link(url: str) -> bool:
 
 def format_duration(value: Any) -> str:
     try:
-        total = max(0, int(value or 0))
+        total_seconds = max(0, int(value or 0))
     except (TypeError, ValueError):
-        return "--:--"
+        return "Noma'lum"
 
-    minutes, seconds = divmod(total, 60)
+    minutes, seconds = divmod(total_seconds, 60)
     hours, minutes = divmod(minutes, 60)
 
     if hours:
@@ -145,12 +186,9 @@ def format_duration(value: Any) -> str:
 
 
 def official_links(song: dict[str, Any]) -> str:
-    query_text = (
-        f"{song.get('artist', '')} "
-        f"{song.get('title', '')}"
-    ).strip()
-
-    query = quote_plus(query_text)
+    title = str(song.get("title") or "")
+    artist = str(song.get("artist") or "")
+    query = quote_plus(f"{artist} {title}".strip())
     deezer_link = song.get("link") or "Topilmadi"
 
     return (
@@ -167,21 +205,20 @@ def search_results_text(
     songs: list[dict[str, Any]],
 ) -> str:
     lines = [
-        "🔎 Qidiruv natijalari",
+        "🔍 Qo'shiq qidirish natijalari:",
         "",
     ]
 
     for index, song in enumerate(songs, start=1):
         lines.append(
-            f"{index}. {song['artist']} — "
-            f"{song['title']} "
+            f"{index}. {song['artist']} — {song['title']} "
             f"({format_duration(song.get('duration'))})"
         )
 
     lines.extend(
         [
             "",
-            "Preview uchun pastdagi raqamni bosing.",
+            "Tinglash uchun natija raqamini bosing.",
         ]
     )
 
@@ -254,17 +291,28 @@ async def safe_edit(
         await message.answer(text)
 
 
-def user_error(
+async def safe_callback_answer(
+    callback: CallbackQuery,
+    text: str | None = None,
+) -> None:
+    try:
+        await callback.answer(text)
+
+    except TelegramBadRequest:
+        pass
+
+
+def user_error_message(
     error: Exception,
     url: str,
     mode: str,
 ) -> str:
-    text = str(error).lower()
+    error_text = str(error).lower()
 
-    if "empty media response" in text:
+    if "empty media response" in error_text:
         return (
             "❌ Instagram media bermadi. Cookies kerak "
-            "yoki post yopiq bo‘lishi mumkin."
+            "yoki post yopiq bo'lishi mumkin."
         )
 
     private_markers = (
@@ -272,16 +320,35 @@ def user_error(
         "login required",
         "requested content is not available",
         "this content isn't available",
+        "content is unavailable",
+        "not available",
     )
 
     if is_instagram_link(url):
         if any(
-            marker in text
+            marker in error_text
             for marker in private_markers
         ):
             return (
-                "❌ Instagram posti yopiq yoki "
-                "mavjud emas."
+                "❌ Ushbu post yopiq hisobga tegishli "
+                "yoki mavjud emas."
+            )
+
+    cookies_markers = (
+        "cookies",
+        "cookie",
+        "login_required",
+        "authentication required",
+    )
+
+    if is_instagram_link(url):
+        if any(
+            marker in error_text
+            for marker in cookies_markers
+        ):
+            return (
+                "❌ Instagram ushbu media uchun kirishni "
+                "chekladi. cookies.txt fayli kerak bo'lishi mumkin."
             )
 
     blocked_markers = (
@@ -294,15 +361,15 @@ def user_error(
     )
 
     if any(
-        marker in text
+        marker in error_text
         for marker in blocked_markers
     ):
         return (
-            "❌ Platforma yuklash so‘rovini blokladi. "
-            "Keyinroq urinib ko‘ring."
+            "❌ Platforma yuklash so'rovini vaqtincha "
+            "blokladi. Keyinroq qayta urinib ko'ring."
         )
 
-    url_markers = (
+    media_markers = (
         "no video formats found",
         "unable to extract",
         "unsupported url",
@@ -311,15 +378,18 @@ def user_error(
     )
 
     if any(
-        marker in text
-        for marker in url_markers
+        marker in error_text
+        for marker in media_markers
     ):
+        if is_instagram_link(url):
+            return "❌ Instagram videosi topilmadi."
+
         return (
-            "❌ Media URL topilmadi yoki havola "
-            "qo‘llab-quvvatlanmaydi."
+            "❌ Media topilmadi yoki havola "
+            "qo'llab-quvvatlanmaydi."
         )
 
-    large_markers = (
+    large_file_markers = (
         "file is too big",
         "request entity too large",
         "too large",
@@ -327,8 +397,8 @@ def user_error(
     )
 
     if any(
-        marker in text
-        for marker in large_markers
+        marker in error_text
+        for marker in large_file_markers
     ):
         return (
             "❌ Fayl Telegram orqali yuborish "
@@ -340,38 +410,40 @@ def user_error(
             "no audio",
             "audio stream",
             "bestaudio",
+            "audio fayl topilmadi",
         )
 
         if any(
-            marker in text
+            marker in error_text
             for marker in audio_markers
         ):
-            return "❌ Bu videoda audio topilmadi."
+            return "❌ Ushbu videoda audio topilmadi."
 
     messages = {
-        "video": "❌ Video yuklashda xatolik bo‘ldi.",
-        "mp3": "❌ MP3 tayyorlashda xatolik bo‘ldi.",
-        "identify": (
-            "❌ Musiqani aniqlash uchun audio olinmadi."
-        ),
+        "video": "❌ Video yuklab olinmadi.",
+        "mp3": "❌ MP3 ajratib bo'lmadi.",
+        "identify": "❌ Musiqani aniqlash uchun audio olinmadi.",
     }
 
     return messages.get(
         mode,
-        "❌ Xatolik yuz berdi.",
+        "❌ Serverda xatolik yuz berdi.",
     )
 
 
-def base_ydl_options() -> dict[str, Any]:
+def ytdlp_base_options() -> dict[str, Any]:
     options: dict[str, Any] = {
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
         "ignoreerrors": False,
-        "retries": 3,
-        "fragment_retries": 3,
+        "retries": 5,
+        "fragment_retries": 5,
+        "extractor_retries": 3,
+        "file_access_retries": 3,
         "socket_timeout": 30,
         "nocheckcertificate": True,
+        "geo_bypass": True,
         "ffmpeg_location": (
             imageio_ffmpeg.get_ffmpeg_exe()
         ),
@@ -383,6 +455,11 @@ def base_ydl_options() -> dict[str, Any]:
                 "(KHTML, like Gecko) "
                 "Chrome/124.0.0.0 Safari/537.36"
             ),
+            "Accept": (
+                "text/html,application/xhtml+xml,"
+                "application/xml;q=0.9,image/avif,"
+                "image/webp,*/*;q=0.8"
+            ),
             "Accept-Language": "en-US,en;q=0.9",
         },
     }
@@ -391,20 +468,20 @@ def base_ydl_options() -> dict[str, Any]:
         options["cookiefile"] = str(COOKIES_FILE)
 
         logger.info(
-            "cookies.txt enabled | path=%s",
+            "cookies.txt ishlatilmoqda | manzil=%s",
             COOKIES_FILE,
         )
 
     return options
 
 
-def clear_folder(folder: str) -> None:
-    path = Path(folder)
+def clear_temporary_folder(folder: str) -> None:
+    folder_path = Path(folder)
 
-    if not path.exists():
+    if not folder_path.exists():
         return
 
-    for item in path.iterdir():
+    for item in folder_path.iterdir():
         try:
             if item.is_dir():
                 shutil.rmtree(
@@ -416,13 +493,12 @@ def clear_folder(folder: str) -> None:
 
         except Exception:
             logger.exception(
-                "Temporary file cleanup failed | "
-                "item=%s",
+                "Vaqtinchalik fayl o'chirilmadi | fayl=%s",
                 item,
             )
 
 
-def find_media_file(
+def find_downloaded_file(
     folder: str,
     suffix: str,
 ) -> str:
@@ -457,11 +533,12 @@ def download_media(
         prefix="ultramedia_"
     )
 
-    options = base_ydl_options()
+    options = ytdlp_base_options()
 
     if mode == "video":
         formats = [
             "best[ext=mp4]/best",
+            "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
             "bestvideo+bestaudio/best",
             "best",
         ]
@@ -479,7 +556,9 @@ def download_media(
         expected_suffix = ".mp4"
 
     elif mode in {"mp3", "identify"}:
-        formats = ["bestaudio/best"]
+        formats = [
+            "bestaudio[ext=m4a]/bestaudio/best",
+        ]
 
         options.update(
             {
@@ -506,7 +585,7 @@ def download_media(
         )
 
         raise ValueError(
-            "Noto‘g‘ri yuklash turi."
+            "Noto'g'ri yuklash turi."
         )
 
     last_error: Exception | None = None
@@ -520,9 +599,8 @@ def download_media(
 
             try:
                 logger.info(
-                    "Download attempt | mode=%s | "
-                    "attempt=%s/%s | format=%s | "
-                    "url=%s",
+                    "Yuklash boshlandi | tur=%s | "
+                    "urinish=%s/%s | format=%s | havola=%s",
                     mode,
                     attempt,
                     len(formats),
@@ -531,45 +609,50 @@ def download_media(
                 )
 
                 with yt_dlp.YoutubeDL(options) as ydl:
-                    info = ydl.extract_info(
+                    information = ydl.extract_info(
                         url,
                         download=True,
                     )
 
-                if not info:
+                if not information:
                     raise RuntimeError(
                         "empty media response"
                     )
 
-                path = find_media_file(
+                path = find_downloaded_file(
                     folder,
                     expected_suffix,
                 )
 
                 if mode in {"mp3", "identify"}:
-                    target = os.path.join(
+                    audio_path = os.path.join(
                         folder,
                         "audio.mp3",
                     )
 
                     if (
                         os.path.abspath(path)
-                        != os.path.abspath(target)
+                        != os.path.abspath(audio_path)
                     ):
-                        os.replace(path, target)
+                        os.replace(
+                            path,
+                            audio_path,
+                        )
 
-                    path = target
+                    path = audio_path
 
-                if os.path.getsize(path) <= 0:
+                file_size = os.path.getsize(path)
+
+                if file_size <= 0:
                     raise RuntimeError(
-                        "Yuklangan media fayli bo‘sh."
+                        "Yuklangan media fayli bo'sh."
                     )
 
                 logger.info(
-                    "Download complete | mode=%s | "
-                    "size=%s | url=%s",
+                    "Yuklash tugadi | tur=%s | "
+                    "hajm=%s | havola=%s",
                     mode,
-                    os.path.getsize(path),
+                    file_size,
                     url,
                 )
 
@@ -579,9 +662,9 @@ def download_media(
                 last_error = error
 
                 logger.exception(
-                    "Download attempt failed | "
-                    "mode=%s | attempt=%s/%s | "
-                    "url=%s | error=%r",
+                    "Yuklash urinishi muvaffaqiyatsiz | "
+                    "tur=%s | urinish=%s/%s | "
+                    "havola=%s | xato=%r",
                     mode,
                     attempt,
                     len(formats),
@@ -589,7 +672,7 @@ def download_media(
                     error,
                 )
 
-                clear_folder(folder)
+                clear_temporary_folder(folder)
 
         raise last_error or RuntimeError(
             "Media fayl topilmadi."
@@ -604,7 +687,7 @@ def download_media(
         raise
 
 
-async def extract_sample(
+async def extract_audio_sample(
     audio_path: str,
     folder: str,
     start_second: int,
@@ -642,52 +725,53 @@ async def extract_sample(
         process.returncode != 0
         or not os.path.exists(sample_path)
     ):
-        details = stderr.decode(
+        technical_error = stderr.decode(
             "utf-8",
             errors="replace",
-        )[-1000:]
+        )[-1500:]
 
         raise RuntimeError(
-            f"Audio sample tayyorlanmadi: "
-            f"{details}"
+            "Audio namunasi tayyorlanmadi: "
+            f"{technical_error}"
         )
 
     if os.path.getsize(sample_path) < 1000:
         raise RuntimeError(
-            "Audio sample juda qisqa yoki bo‘sh."
+            "Audio namunasi juda qisqa yoki bo'sh."
         )
 
     return sample_path
 
 
-def parse_shazam(
+def parse_shazam_result(
     result: dict[str, Any],
 ) -> dict[str, Any] | None:
     track = result.get("track") or {}
 
-    if not track.get("title"):
+    title = track.get("title")
+
+    if not title:
         return None
 
     album = None
 
     for section in track.get("sections") or []:
         for item in section.get("metadata") or []:
-            if (
-                str(
-                    item.get("title", "")
-                ).lower()
-                == "album"
-            ):
+            metadata_title = str(
+                item.get("title", "")
+            ).lower()
+
+            if metadata_title == "album":
                 album = item.get("text")
                 break
 
     images = track.get("images") or {}
 
     return {
-        "title": track.get("title"),
+        "title": title,
         "artist": (
             track.get("subtitle")
-            or "Noma’lum artist"
+            or "Noma'lum ijrochi"
         ),
         "album": album,
         "cover": (
@@ -698,55 +782,57 @@ def parse_shazam(
     }
 
 
-async def identify_song(
+async def identify_music(
     audio_path: str,
     folder: str,
 ) -> dict[str, Any] | None:
-    windows = [
-        (0, "0–20"),
-        (5, "5–25"),
-        (10, "10–30"),
+    sample_windows = [
+        (0, "0-20 soniya"),
+        (5, "5-25 soniya"),
+        (10, "10-30 soniya"),
     ]
 
     for index, (
-        start,
-        label,
-    ) in enumerate(windows, start=1):
+        start_second,
+        window_name,
+    ) in enumerate(sample_windows, start=1):
         try:
-            sample_path = await extract_sample(
+            sample_path = await extract_audio_sample(
                 audio_path,
                 folder,
-                start,
+                start_second,
                 index,
             )
 
             logger.info(
-                "Shazam attempt | window=%s",
-                label,
+                "Shazam tekshiruvi | oraliq=%s",
+                window_name,
             )
 
             raw_result = await shazam.recognize(
                 sample_path
             )
 
-            result = parse_shazam(raw_result)
+            result = parse_shazam_result(
+                raw_result
+            )
 
             if result:
                 logger.info(
-                    "Shazam match | artist=%s | "
-                    "title=%s | window=%s",
+                    "Musiqa aniqlandi | ijrochi=%s | "
+                    "nomi=%s | oraliq=%s",
                     result["artist"],
                     result["title"],
-                    label,
+                    window_name,
                 )
 
                 return result
 
         except Exception as error:
             logger.exception(
-                "Shazam failed | window=%s | "
-                "error=%r",
-                label,
+                "Shazam tekshiruvida xato | "
+                "oraliq=%s | xato=%r",
+                window_name,
                 error,
             )
 
@@ -762,7 +848,7 @@ async def search_deezer(
         timeout=timeout
     ) as session:
         async with session.get(
-            DEEZER_API,
+            DEEZER_API_URL,
             params={
                 "q": query,
                 "limit": SEARCH_LIMIT,
@@ -770,7 +856,7 @@ async def search_deezer(
         ) as response:
             if response.status != 200:
                 raise RuntimeError(
-                    f"Deezer HTTP {response.status}"
+                    f"Deezer javob kodi: {response.status}"
                 )
 
             data = await response.json(
@@ -789,11 +875,11 @@ async def search_deezer(
             {
                 "title": (
                     item.get("title")
-                    or "Noma’lum qo‘shiq"
+                    or "Noma'lum qo'shiq"
                 ),
                 "artist": (
                     artist.get("name")
-                    or "Noma’lum artist"
+                    or "Noma'lum ijrochi"
                 ),
                 "album": album.get("title"),
                 "duration": item.get("duration"),
@@ -809,46 +895,47 @@ async def search_deezer(
     return songs
 
 
-async def find_lyrics(
-    title: str,
-    artist: str,
-) -> str | None:
+async def request_lyrics(
+    parameters: dict[str, str],
+) -> list[dict[str, Any]]:
     timeout = aiohttp.ClientTimeout(total=20)
 
     async with aiohttp.ClientSession(
         timeout=timeout
     ) as session:
         async with session.get(
-            LRCLIB_API,
-            params={
-                "track_name": title,
-                "artist_name": artist,
-            },
+            LRCLIB_API_URL,
+            params=parameters,
         ) as response:
             if response.status != 200:
                 logger.warning(
-                    "LRCLIB failed | status=%s | "
-                    "artist=%s | title=%s",
+                    "LRCLIB xato javobi | kod=%s | "
+                    "so'rov=%s",
                     response.status,
-                    artist,
-                    title,
+                    parameters,
                 )
 
-                return None
+                return []
 
             data = await response.json(
                 content_type=None
             )
 
     if not isinstance(data, list):
-        return None
+        return []
 
-    if not data:
+    return data
+
+
+def prepare_lyrics(
+    results: list[dict[str, Any]],
+) -> str | None:
+    if not results:
         return None
 
     lyrics = (
-        data[0].get("plainLyrics")
-        or data[0].get("syncedLyrics")
+        results[0].get("plainLyrics")
+        or results[0].get("syncedLyrics")
     )
 
     if not lyrics:
@@ -863,14 +950,49 @@ async def find_lyrics(
     return lyrics
 
 
+async def find_song_lyrics(
+    title: str,
+    artist: str,
+) -> str | None:
+    results = await request_lyrics(
+        {
+            "track_name": title,
+            "artist_name": artist,
+        }
+    )
+
+    return prepare_lyrics(results)
+
+
+async def search_lyrics_by_query(
+    query: str,
+) -> tuple[str, str, str] | None:
+    results = await request_lyrics(
+        {"q": query}
+    )
+
+    lyrics = prepare_lyrics(results)
+
+    if not lyrics or not results:
+        return None
+
+    item = results[0]
+
+    return (
+        item.get("trackName") or "Noma'lum qo'shiq",
+        item.get("artistName") or "Noma'lum ijrochi",
+        lyrics,
+    )
+
+
 async def download_preview(
-    url: str,
+    preview_url: str,
 ) -> tuple[str, str]:
     folder = tempfile.mkdtemp(
         prefix="ultramedia_preview_"
     )
 
-    path = os.path.join(
+    preview_path = os.path.join(
         folder,
         "preview.mp3",
     )
@@ -882,33 +1004,36 @@ async def download_preview(
             timeout=timeout
         ) as session:
             async with session.get(
-                url
+                preview_url
             ) as response:
                 if response.status != 200:
                     raise RuntimeError(
-                        "Deezer preview HTTP "
-                        f"{response.status}"
+                        "Deezer namuna audiosi olinmadi. "
+                        f"Javob kodi: {response.status}"
                     )
 
-                with open(path, "wb") as file:
+                with open(
+                    preview_path,
+                    "wb",
+                ) as output_file:
                     async for chunk in (
                         response.content.iter_chunked(
                             128 * 1024
                         )
                     ):
-                        file.write(chunk)
+                        output_file.write(chunk)
 
-        if not os.path.exists(path):
+        if not os.path.exists(preview_path):
             raise RuntimeError(
-                "Preview fayli topilmadi."
+                "Namuna audio fayli topilmadi."
             )
 
-        if os.path.getsize(path) <= 0:
+        if os.path.getsize(preview_path) <= 0:
             raise RuntimeError(
-                "Preview fayli bo‘sh."
+                "Namuna audio fayli bo'sh."
             )
 
-        return path, folder
+        return preview_path, folder
 
     except Exception:
         shutil.rmtree(
@@ -919,17 +1044,17 @@ async def download_preview(
         raise
 
 
-async def send_recognition(
+async def send_identified_music(
     message: Message,
     song: dict[str, Any],
 ) -> None:
     text = (
-        f"🎵 {song['title']}\n"
-        f"👤 {song['artist']}\n"
-        f"💿 "
+        f"🎵 Nomi: {song['title']}\n"
+        f"👤 Ijrochi: {song['artist']}\n"
+        f"💿 Albom: "
         f"{song.get('album') or 'Topilmadi'}\n"
-        f"🔗 "
-        f"{song.get('shazam_link') or 'Shazam link topilmadi'}"
+        f"🔗 Shazam: "
+        f"{song.get('shazam_link') or 'Topilmadi'}"
     )
 
     cover = song.get("cover")
@@ -945,7 +1070,7 @@ async def send_recognition(
 
         except Exception as error:
             logger.warning(
-                "Cover send failed | error=%r",
+                "Muqova yuborilmadi | xato=%r",
                 error,
             )
 
@@ -956,16 +1081,67 @@ async def send_recognition(
 async def start_handler(
     message: Message,
 ) -> None:
+    user_modes.pop(message.from_user.id, None)
+
     await message.answer(
         "🚀 UltraMediaBot\n\n"
-        "📹 Video download\n"
-        "🎵 MP3 extract\n"
-        "🎼 Music identification\n"
-        "🔎 Song search\n"
-        "📝 Lyrics\n\n"
-        "Media havolasi, qo‘shiq nomi "
-        "yoki artist yuboring."
+        "Kerakli bo'limni tanlang:",
+        reply_markup=main_menu(),
     )
+
+
+@dp.callback_query(F.data.startswith("menu:"))
+async def main_menu_handler(
+    callback: CallbackQuery,
+) -> None:
+    action = (callback.data or "").split(
+        ":",
+        maxsplit=1,
+    )[-1]
+
+    messages = {
+        "video": (
+            "🎥 TikTok, Instagram yoki YouTube Shorts "
+            "havolasini yuboring."
+        ),
+        "mp3": (
+            "🎵 MP3 ajratish uchun media "
+            "havolasini yuboring."
+        ),
+        "identify": (
+            "🎼 Musiqani aniqlash uchun video "
+            "havolasini yuboring."
+        ),
+        "search": (
+            "🔍 Qo'shiq nomi yoki ijrochi "
+            "nomini yozing."
+        ),
+        "lyrics": (
+            "📝 Qo'shiq nomi va ijrochini yozing."
+        ),
+    }
+
+    if action in {"video", "mp3", "identify"}:
+        user_modes[callback.from_user.id] = action
+
+    elif action == "search":
+        user_modes[callback.from_user.id] = "search"
+
+    elif action == "lyrics":
+        user_modes[callback.from_user.id] = "lyrics"
+
+    else:
+        await callback.message.answer(
+            "❌ Noto'g'ri tanlov."
+        )
+        await safe_callback_answer(callback)
+        return
+
+    await callback.message.answer(
+        messages[action]
+    )
+
+    await safe_callback_answer(callback)
 
 
 @dp.message()
@@ -973,27 +1149,28 @@ async def message_handler(
     message: Message,
 ) -> None:
     text = (message.text or "").strip()
+    user_id = message.from_user.id
 
     if not text:
         await message.answer(
-            "Havola, qo‘shiq nomi yoki "
-            "artist yuboring."
+            "❌ Xabar bo'sh. Havola yoki matn yuboring."
         )
         return
 
     if is_supported_link(text):
-        user_links[message.from_user.id] = text
+        user_links[user_id] = text
 
         logger.info(
-            "Link accepted | user_id=%s | url=%s",
-            message.from_user.id,
+            "Havola qabul qilindi | "
+            "foydalanuvchi=%s | havola=%s",
+            user_id,
             text,
         )
 
         await message.answer(
             "✅ Havola qabul qilindi. "
-            "Amalni tanlang:",
-            reply_markup=media_keyboard(),
+            "Kerakli amalni tanlang:",
+            reply_markup=media_menu(),
         )
 
         return
@@ -1002,12 +1179,61 @@ async def message_handler(
         ("http://", "https://")
     ):
         await message.answer(
-            "❌ Bu havola qo‘llab-quvvatlanmaydi."
+            "❌ Havola noto'g'ri yoki "
+            "qo'llab-quvvatlanmaydi."
         )
         return
 
+    mode = user_modes.get(
+        user_id,
+        "search",
+    )
+
+    if mode == "lyrics":
+        status = await message.answer(
+            "📝 Qo'shiq matni qidirilmoqda..."
+        )
+
+        try:
+            result = await search_lyrics_by_query(
+                text
+            )
+
+            if not result:
+                await safe_edit(
+                    status,
+                    "❌ Qo'shiq matni topilmadi.",
+                )
+                return
+
+            title, artist, lyrics = result
+
+            await safe_edit(
+                status,
+                f"📝 {artist} — {title}\n\n"
+                f"{lyrics}",
+            )
+
+        except Exception as error:
+            logger.exception(
+                "Matn qidirishda xato | "
+                "foydalanuvchi=%s | so'rov=%s | "
+                "xato=%r",
+                user_id,
+                text,
+                error,
+            )
+
+            await safe_edit(
+                status,
+                "❌ Qo'shiq matnini qidirishda "
+                "server xatosi yuz berdi.",
+            )
+
+        return
+
     status = await message.answer(
-        "🔎 Deezer orqali qidirilmoqda..."
+        "🔍 Qo'shiq qidirilmoqda..."
     )
 
     try:
@@ -1016,18 +1242,18 @@ async def message_handler(
         if not songs:
             await safe_edit(
                 status,
-                "❌ Qo‘shiq topilmadi.",
+                "❌ Qo'shiq topilmadi.",
             )
             return
 
         token = create_search_session(
-            message.from_user.id,
+            user_id,
             songs,
         )
 
         await status.edit_text(
             search_results_text(songs),
-            reply_markup=search_keyboard(
+            reply_markup=search_results_menu(
                 token,
                 len(songs),
             ),
@@ -1035,25 +1261,29 @@ async def message_handler(
 
     except Exception as error:
         logger.exception(
-            "Song search failed | user_id=%s | "
-            "query=%s | error=%r",
-            message.from_user.id,
+            "Qo'shiq qidirishda xato | "
+            "foydalanuvchi=%s | so'rov=%s | "
+            "xato=%r",
+            user_id,
             text,
             error,
         )
 
         await safe_edit(
             status,
-            "❌ Qo‘shiq qidirishda "
-            "xatolik bo‘ldi.",
+            "❌ Qo'shiq qidirishda "
+            "server xatosi yuz berdi.",
         )
 
 
-async def process_media_callback(
+async def process_media_action(
     callback: CallbackQuery,
     mode: str,
 ) -> None:
-    url = user_links.get(callback.from_user.id)
+    url = user_links.get(
+        callback.from_user.id
+    )
+
     folder: str | None = None
     status: Message | None = None
 
@@ -1066,10 +1296,14 @@ async def process_media_callback(
             return
 
         status_messages = {
-            "video": "⏳ Video yuklanmoqda...",
-            "mp3": "🎵 MP3 tayyorlanmoqda...",
+            "video": (
+                "⏳ Video yuklab olinmoqda..."
+            ),
+            "mp3": (
+                "⏳ MP3 ajratilmoqda..."
+            ),
             "identify": (
-                "🎼 Musiqa aniqlanmoqda..."
+                "⏳ Musiqa aniqlanmoqda..."
             ),
         }
 
@@ -1077,7 +1311,7 @@ async def process_media_callback(
             status_messages[mode]
         )
 
-        path, folder = await asyncio.to_thread(
+        media_path, folder = await asyncio.to_thread(
             download_media,
             url,
             mode,
@@ -1085,9 +1319,9 @@ async def process_media_callback(
 
         if mode == "video":
             await callback.message.answer_video(
-                video=FSInputFile(path),
+                video=FSInputFile(media_path),
                 caption=(
-                    "✅ Video tayyor!\n\n"
+                    "✅ Video tayyor.\n\n"
                     f"{BOT_USERNAME}"
                 ),
             )
@@ -1095,18 +1329,18 @@ async def process_media_callback(
         elif mode == "mp3":
             await callback.message.answer_audio(
                 audio=FSInputFile(
-                    path,
+                    media_path,
                     filename="audio.mp3",
                 ),
                 caption=(
-                    "✅ MP3 tayyor!\n\n"
+                    "✅ MP3 tayyor.\n\n"
                     f"{BOT_USERNAME}"
                 ),
             )
 
         else:
-            song = await identify_song(
-                path,
+            song = await identify_music(
+                media_path,
                 folder,
             )
 
@@ -1115,14 +1349,14 @@ async def process_media_callback(
                     status,
                     "❌ Musiqa aniqlanmadi. "
                     "Audio shovqinli yoki "
-                    "Shazam bazasida yo‘q.",
+                    "Shazam bazasida mavjud emas.",
                 )
                 return
 
             await status.delete()
             status = None
 
-            await send_recognition(
+            await send_identified_music(
                 callback.message,
                 song,
             )
@@ -1132,16 +1366,16 @@ async def process_media_callback(
 
     except Exception as error:
         logger.exception(
-            "Media operation failed | "
-            "mode=%s | user_id=%s | "
-            "url=%s | error=%r",
+            "Media amalida xato | tur=%s | "
+            "foydalanuvchi=%s | havola=%s | "
+            "xato=%r",
             mode,
             callback.from_user.id,
             url,
             error,
         )
 
-        text = user_error(
+        text = user_error_message(
             error,
             url or "",
             mode,
@@ -1165,12 +1399,13 @@ async def video_callback(
     callback: CallbackQuery,
 ) -> None:
     try:
-        await process_media_callback(
+        await process_media_action(
             callback,
             "video",
         )
+
     finally:
-        await callback.answer()
+        await safe_callback_answer(callback)
 
 
 @dp.callback_query(F.data == "media:mp3")
@@ -1178,12 +1413,13 @@ async def mp3_callback(
     callback: CallbackQuery,
 ) -> None:
     try:
-        await process_media_callback(
+        await process_media_action(
             callback,
             "mp3",
         )
+
     finally:
-        await callback.answer()
+        await safe_callback_answer(callback)
 
 
 @dp.callback_query(F.data == "media:identify")
@@ -1191,16 +1427,17 @@ async def identify_callback(
     callback: CallbackQuery,
 ) -> None:
     try:
-        await process_media_callback(
+        await process_media_action(
             callback,
             "identify",
         )
+
     finally:
-        await callback.answer()
+        await safe_callback_answer(callback)
 
 
 @dp.callback_query(F.data.startswith("song:"))
-async def song_callback(
+async def song_result_callback(
     callback: CallbackQuery,
 ) -> None:
     folder: str | None = None
@@ -1212,7 +1449,7 @@ async def song_callback(
 
         if not parsed:
             await callback.message.answer(
-                "❌ Noto‘g‘ri tanlov."
+                "❌ Noto'g'ri tanlov."
             )
             return
 
@@ -1226,25 +1463,27 @@ async def song_callback(
 
         if not song:
             await callback.message.answer(
-                "❌ Natija eskirgan. "
-                "Qayta qidiring."
+                "❌ Qidiruv natijasi eskirgan. "
+                "Qaytadan qidiring."
             )
             return
 
         preview_url = song.get("preview")
 
         if preview_url:
-            path, folder = await download_preview(
-                preview_url
+            preview_path, folder = (
+                await download_preview(
+                    preview_url
+                )
             )
 
             caption = (
-                "🎵 Deezer preview\n\n"
-                f"🎵 {song['title']}\n"
-                f"👤 {song['artist']}\n"
-                f"💿 "
+                "🎵 Namuna audio\n\n"
+                f"🎵 Nomi: {song['title']}\n"
+                f"👤 Ijrochi: {song['artist']}\n"
+                f"💿 Albom: "
                 f"{song.get('album') or 'Topilmadi'}\n"
-                f"⏱ "
+                f"⏱ Davomiyligi: "
                 f"{format_duration(song.get('duration'))}\n\n"
                 f"{official_links(song)}\n\n"
                 f"{BOT_USERNAME}"
@@ -1252,7 +1491,7 @@ async def song_callback(
 
             await callback.message.answer_audio(
                 audio=FSInputFile(
-                    path,
+                    preview_path,
                     filename="preview.mp3",
                 ),
                 caption=caption,
@@ -1260,11 +1499,12 @@ async def song_callback(
 
         else:
             await callback.message.answer(
-                "❌ Preview topilmadi.\n\n"
+                "❌ Ushbu qo'shiq uchun "
+                "namuna audio topilmadi.\n\n"
                 f"{official_links(song)}"
             )
 
-        lyrics = await find_lyrics(
+        lyrics = await find_song_lyrics(
             song["title"],
             song["artist"],
         )
@@ -1277,13 +1517,14 @@ async def song_callback(
             )
         else:
             await callback.message.answer(
-                "📝 Matn topilmadi."
+                "❌ Qo'shiq matni topilmadi."
             )
 
     except Exception as error:
         logger.exception(
-            "Song selection failed | "
-            "user_id=%s | data=%s | error=%r",
+            "Natijani yuborishda xato | "
+            "foydalanuvchi=%s | ma'lumot=%s | "
+            "xato=%r",
             callback.from_user.id,
             callback.data,
             error,
@@ -1291,7 +1532,7 @@ async def song_callback(
 
         await callback.message.answer(
             "❌ Natijani yuborishda "
-            "xatolik bo‘ldi."
+            "server xatosi yuz berdi."
         )
 
     finally:
@@ -1301,12 +1542,11 @@ async def song_callback(
                 ignore_errors=True,
             )
 
-        await callback.answer()
+        await safe_callback_answer(callback)
 
 
 async def main() -> None:
-    # TelegramConflictError oldini olish uchun
-    # Render'da faqat bitta worker ishlating.
+    # Bir token bilan faqat bitta Render ishchisi ishlashi kerak.
     await bot.delete_webhook(
         drop_pending_updates=True
     )
@@ -1321,9 +1561,10 @@ async def main() -> None:
 
     except TelegramConflictError:
         logger.exception(
-            "Boshqa bot instance long polling "
-            "qilmoqda."
+            "Boshqa bot nusxasi ayni token "
+            "bilan ishlab turibdi."
         )
+
         raise
 
     finally:
