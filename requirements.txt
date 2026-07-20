@@ -1,6 +1,0 @@
-aiogram==3.13.1
-aiohttp==3.10.11
-yt-dlp
-imageio-ffmpeg
-shazamio
-python-dotenv
